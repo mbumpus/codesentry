@@ -1,0 +1,448 @@
+{
+  "project": "CodeSentry",
+  "phase": 0,
+  "codename": "Validation Prototype",
+  "version": "0.1.0",
+  "release_target": "#SETuesday",
+  
+  "overview": {
+    "tagline": "AI-Powered Pattern-Aware Code Analysis & Developer Education Engine",
+    "phase_goal": "Validate core hypothesis: developers prefer tools that teach, not just flag. Ship minimal CLI scanning Python files for 5 hard-coded patterns with educational explanations.",
+    "success_criteria": [
+      "CLI runs on any Python file without crashing",
+      "Detects all 5 patterns with <5% false positive rate on test corpus",
+      "10 developer testers report 'teach' framing more valuable than 'lint' framing",
+      "At least 3 testers say they learned something new"
+    ],
+    "non_goals_phase0": [
+      "Multi-file analysis",
+      "AI/LLM-powered detection",
+      "IDE integrations",
+      "Auto-fix suggestions",
+      "Configuration files",
+      "Custom pattern definition"
+    ]
+  },
+
+  "cli_interface": {
+    "command": "codesentry",
+    "subcommands": {
+      "scan": {
+        "description": "Analyze a Python file for anti-patterns",
+        "usage": [
+          "codesentry scan <file.py>",
+          "codesentry scan <file.py> --teach",
+          "codesentry scan <file.py> --quick",
+          "codesentry scan <file.py> --format json"
+        ],
+        "arguments": {
+          "file": {
+            "type": "positional",
+            "required": true,
+            "description": "Path to Python file to analyze"
+          }
+        },
+        "flags": {
+          "--teach": {
+            "short": "-t",
+            "description": "Verbose mode with full explanations, examples, and learning tips",
+            "default": false
+          },
+          "--quick": {
+            "short": "-q",
+            "description": "Minimal output - just issue type and line number",
+            "default": false
+          },
+          "--format": {
+            "short": "-f",
+            "choices": ["text", "json"],
+            "default": "text",
+            "description": "Output format"
+          },
+          "--no-color": {
+            "description": "Disable colored output",
+            "default": false
+          }
+        }
+      },
+      "version": {
+        "description": "Show version info",
+        "usage": ["codesentry version", "codesentry --version"]
+      },
+      "patterns": {
+        "description": "List all detectable patterns with descriptions",
+        "usage": ["codesentry patterns"]
+      }
+    }
+  },
+
+  "patterns": {
+    "overview": "5 hard-coded patterns covering AI-generated code signatures, async bugs, security, and Python idioms",
+    "pattern_list": [
+      {
+        "id": "CS001",
+        "name": "generic-exception-swallow",
+        "category": "ai-generated-signature",
+        "severity": "warning",
+        "detection_method": "AST",
+        "description": "Catching broad exceptions and silently ignoring them - a hallmark of LLM-generated code that 'works' but hides bugs",
+        "triggers": [
+          "except Exception: pass",
+          "except Exception as e: pass",
+          "except: pass",
+          "except BaseException: pass",
+          "except Exception: ... (with only logging, no re-raise)"
+        ],
+        "ast_detection": {
+          "node_type": "ExceptHandler",
+          "conditions": [
+            "handler.type is None (bare except)",
+            "handler.type.id in ['Exception', 'BaseException']",
+            "handler.body contains only Pass, or only logging call"
+          ]
+        },
+        "teaching": {
+          "what": "You're catching all exceptions and silently swallowing them.",
+          "why": "This hides bugs, masks crashes, and makes debugging nearly impossible. If something fails, you'll never know. LLMs often generate this pattern because it 'prevents errors' in the most superficial way.",
+          "fix": "Catch specific exceptions you can handle. Re-raise or log with traceback for unexpected ones.",
+          "spot_it_yourself": "Search for 'except Exception' and 'except:' in your codebase. Ask: 'What specific error am I handling here?' If you can't answer, you're probably swallowing bugs.",
+          "example_bad": "try:\n    data = fetch_user(id)\nexcept Exception:\n    pass  # User not found? Network error? Bug? Who knows!",
+          "example_good": "try:\n    data = fetch_user(id)\nexcept UserNotFoundError:\n    return None  # Expected case, handled explicitly\nexcept NetworkError as e:\n    logger.warning(f'Network issue: {e}')\n    raise  # Let caller decide retry strategy"
+        }
+      },
+      {
+        "id": "CS002",
+        "name": "placeholder-code-in-production",
+        "category": "ai-generated-signature",
+        "severity": "error",
+        "detection_method": "AST+regex",
+        "description": "TODO/FIXME comments paired with placeholder implementations - LLMs generate stubs they never filled in",
+        "triggers": [
+          "# TODO paired with pass statement",
+          "# TODO paired with NotImplementedError",
+          "# FIXME paired with pass statement",
+          "Function body is only pass/... after docstring"
+        ],
+        "ast_detection": {
+          "approach": "Two-pass: regex finds TODO/FIXME comments, AST checks if following statement is Pass/Raise NotImplementedError",
+          "node_types": ["FunctionDef", "AsyncFunctionDef"],
+          "conditions": [
+            "Body contains only Pass or Ellipsis (after docstring)",
+            "Body is single Raise(NotImplementedError)",
+            "Comment within 2 lines contains TODO/FIXME/HACK"
+          ]
+        },
+        "teaching": {
+          "what": "You have placeholder code that was never implemented.",
+          "why": "LLMs often generate function stubs with TODO comments, expecting you to fill them in. Shipping these means silent failures or crashes in production. It's also a sign of copy-paste without review.",
+          "fix": "Implement the function, remove it if unused, or raise a clear custom exception if intentionally incomplete.",
+          "spot_it_yourself": "Run 'grep -rn \"TODO\\|FIXME\" *.py' and check each hit. Is there actual implementation below the comment? Set up pre-commit hooks to catch these.",
+          "example_bad": "def calculate_tax(amount, region):\n    # TODO: implement tax calculation\n    pass",
+          "example_good": "def calculate_tax(amount: float, region: str) -> float:\n    tax_rates = {'US': 0.08, 'UK': 0.20, 'DE': 0.19}\n    if region not in tax_rates:\n        raise UnsupportedRegionError(f'No tax rate for {region}')\n    return amount * tax_rates[region]"
+        }
+      },
+      {
+        "id": "CS003",
+        "name": "blocking-call-in-async",
+        "category": "async-concurrency",
+        "severity": "error",
+        "detection_method": "AST",
+        "description": "Using blocking calls (time.sleep, requests.get, open()) inside async functions, defeating the purpose of async",
+        "triggers": [
+          "time.sleep() in async def",
+          "requests.get/post/put/delete in async def",
+          "open() for file I/O in async def",
+          "input() in async def"
+        ],
+        "ast_detection": {
+          "node_type": "AsyncFunctionDef",
+          "scan_for_calls": [
+            {"module": "time", "func": "sleep", "async_alt": "asyncio.sleep"},
+            {"module": "requests", "func": "*", "async_alt": "aiohttp or httpx"},
+            {"builtin": "open", "async_alt": "aiofiles.open"},
+            {"builtin": "input", "async_alt": "aioconsole.ainput"}
+          ],
+          "conditions": [
+            "Call node inside AsyncFunctionDef body",
+            "Call matches known blocking function signature"
+          ]
+        },
+        "teaching": {
+          "what": "You're using a blocking call inside an async function.",
+          "why": "Async functions run on an event loop. Blocking calls freeze the ENTIRE loop, not just your function. If you await asyncio.sleep(1), other tasks run. If you call time.sleep(1), everything stops for a second. This defeats the purpose of async and can cause timeouts, unresponsive servers, and cascading failures.",
+          "fix": "Replace blocking calls with their async equivalents: time.sleep → asyncio.sleep, requests → aiohttp/httpx, open → aiofiles.",
+          "spot_it_yourself": "In any 'async def', search for: time.sleep, requests., open(, input(. These are red flags. The rule: if you're in async-land, everything I/O-related should be awaited.",
+          "example_bad": "async def fetch_data(url):\n    response = requests.get(url)  # Blocks entire event loop!\n    time.sleep(1)  # Even worse - freezes everything\n    return response.json()",
+          "example_good": "async def fetch_data(url):\n    async with aiohttp.ClientSession() as session:\n        async with session.get(url) as response:\n            await asyncio.sleep(1)  # Other tasks can run\n            return await response.json()"
+        }
+      },
+      {
+        "id": "CS004",
+        "name": "hardcoded-secret",
+        "category": "security",
+        "severity": "critical",
+        "detection_method": "regex+AST",
+        "description": "API keys, passwords, tokens, or secrets hardcoded in source files",
+        "triggers": [
+          "Variable named *_KEY, *_SECRET, *_TOKEN, *_PASSWORD with string literal",
+          "String matching API key patterns (sk-*, ghp_*, xoxb-*, etc.)",
+          "Basic auth credentials in URLs",
+          "Private key content (BEGIN RSA PRIVATE KEY)"
+        ],
+        "detection_rules": {
+          "variable_patterns": [
+            ".*(?:API|ACCESS|SECRET|PRIVATE)[_-]?KEY.*",
+            ".*(?:PASSWORD|PASSWD|PWD).*",
+            ".*(?:TOKEN|AUTH|CREDENTIAL).*",
+            ".*(?:DATABASE|DB)[_-]?(?:URL|URI|CONNECTION).*"
+          ],
+          "value_patterns": [
+            {"name": "OpenAI", "pattern": "sk-[a-zA-Z0-9]{48}"},
+            {"name": "GitHub PAT", "pattern": "ghp_[a-zA-Z0-9]{36}"},
+            {"name": "GitHub OAuth", "pattern": "gho_[a-zA-Z0-9]{36}"},
+            {"name": "Slack Token", "pattern": "xox[baprs]-[a-zA-Z0-9-]+"},
+            {"name": "AWS Access Key", "pattern": "AKIA[0-9A-Z]{16}"},
+            {"name": "Stripe", "pattern": "sk_live_[a-zA-Z0-9]{24}"},
+            {"name": "Generic High Entropy", "pattern": "String >20 chars with high entropy in sensitive variable"}
+          ],
+          "url_patterns": [
+            "://[^:]+:[^@]+@",
+            "Basic [A-Za-z0-9+/=]{20,}"
+          ]
+        },
+        "teaching": {
+          "what": "You have a secret (API key, password, token) hardcoded in your source file.",
+          "why": "Secrets in code get committed to git, shared in code reviews, and leaked in logs. Once a secret is in git history, it's there forever (unless you rewrite history). Attackers actively scan GitHub for leaked credentials. This is how breaches happen.",
+          "fix": "Use environment variables (os.environ['API_KEY']), a .env file (with python-dotenv), or a secrets manager. Never commit real credentials.",
+          "spot_it_yourself": "Before every commit, run 'git diff --staged | grep -iE \"key|secret|token|password\"'. Better: use pre-commit hooks with tools like detect-secrets or gitleaks.",
+          "example_bad": "OPENAI_API_KEY = 'sk-abc123def456ghi789jkl012mno345pqr678stu901vwx'\nDATABASE_URL = 'postgresql://admin:supersecret123@prod-db.example.com/app'",
+          "example_good": "import os\nfrom dotenv import load_dotenv\n\nload_dotenv()\n\nOPENAI_API_KEY = os.environ['OPENAI_API_KEY']\nDATABASE_URL = os.environ['DATABASE_URL']"
+        }
+      },
+      {
+        "id": "CS005",
+        "name": "mutable-default-argument",
+        "category": "python-idiom",
+        "severity": "warning",
+        "detection_method": "AST",
+        "description": "Using mutable objects (list, dict, set) as default function arguments - a classic Python gotcha",
+        "triggers": [
+          "def func(items=[])",
+          "def func(data={})",
+          "def func(seen=set())"
+        ],
+        "ast_detection": {
+          "node_type": ["FunctionDef", "AsyncFunctionDef"],
+          "check": "defaults and kw_defaults",
+          "mutable_types": ["List", "Dict", "Set", "Call to list()/dict()/set()"]
+        },
+        "teaching": {
+          "what": "You're using a mutable object (list, dict, set) as a default argument.",
+          "why": "Default arguments are evaluated ONCE when the function is defined, not each time it's called. This means all calls share the same list/dict/set object. Modifying it in one call affects all future calls. This is one of Python's most infamous gotchas and catches everyone at least once.",
+          "fix": "Use None as default and create the mutable object inside the function.",
+          "spot_it_yourself": "In function signatures, look for '=[]', '={}', or '=set()'. These are almost always bugs. The pattern 'param=None' followed by 'if param is None: param = []' is the correct idiom.",
+          "example_bad": "def add_item(item, items=[]):\n    items.append(item)\n    return items\n\nadd_item('a')  # Returns ['a']\nadd_item('b')  # Returns ['a', 'b'] - Wait, what?!",
+          "example_good": "def add_item(item, items=None):\n    if items is None:\n        items = []\n    items.append(item)\n    return items\n\nadd_item('a')  # Returns ['a']\nadd_item('b')  # Returns ['b'] - Correct!"
+        }
+      }
+    ]
+  },
+
+  "output_format": {
+    "text_default": {
+      "description": "Balanced output with issue + brief explanation",
+      "template": "╭─ {severity_icon} {pattern_name} ({pattern_id})\n│  {file}:{line}:{col}\n│\n│  {what}\n│\n│  💡 {fix_summary}\n╰─────────────────────────────"
+    },
+    "text_teach": {
+      "description": "Full educational output",
+      "template": "═══════════════════════════════════════════════════════════\n🔍 ISSUE: {pattern_name} ({pattern_id})\n   Severity: {severity} | Category: {category}\n   Location: {file}:{line}:{col}\n───────────────────────────────────────────────────────────\n📍 WHAT'S HAPPENING:\n{what}\n\n❓ WHY IT MATTERS:\n{why}\n\n✅ HOW TO FIX:\n{fix}\n\n📝 CODE EXAMPLE:\n  ❌ Bad:\n{example_bad}\n\n  ✅ Good:\n{example_good}\n\n🎓 SPOT IT YOURSELF:\n{spot_it_yourself}\n═══════════════════════════════════════════════════════════"
+    },
+    "text_quick": {
+      "description": "Minimal lint-style output",
+      "template": "{file}:{line}:{col}: {severity_code} {pattern_id} {pattern_name}"
+    },
+    "json": {
+      "description": "Machine-readable JSON output",
+      "schema": {
+        "file": "string",
+        "scan_time": "ISO8601",
+        "version": "string",
+        "summary": {
+          "total_issues": "int",
+          "by_severity": {"critical": "int", "error": "int", "warning": "int"}
+        },
+        "issues": [
+          {
+            "id": "string (CS001-CS005)",
+            "name": "string",
+            "category": "string",
+            "severity": "string",
+            "location": {"line": "int", "col": "int", "end_line": "int", "end_col": "int"},
+            "snippet": "string (source code excerpt)",
+            "teaching": {
+              "what": "string",
+              "why": "string",
+              "fix": "string",
+              "spot_it_yourself": "string"
+            }
+          }
+        ]
+      }
+    }
+  },
+
+  "architecture": {
+    "overview": "Simple pipeline: Parse → Detect → Format → Output",
+    "components": {
+      "cli": {
+        "purpose": "Entry point, argument parsing, orchestration",
+        "library": "click or typer",
+        "responsibilities": ["Parse args", "Load file", "Call analyzer", "Format output", "Exit codes"]
+      },
+      "parser": {
+        "purpose": "Convert Python source to AST",
+        "library": "ast (stdlib)",
+        "responsibilities": ["Parse file to AST", "Handle syntax errors gracefully", "Extract comments for regex patterns"]
+      },
+      "analyzers": {
+        "purpose": "Pattern detection logic",
+        "design": "One analyzer class per pattern, all inherit from BaseAnalyzer",
+        "responsibilities": ["Visit relevant AST nodes", "Apply detection rules", "Return Issue objects"]
+      },
+      "reporter": {
+        "purpose": "Format and output results",
+        "responsibilities": ["Format issues per output mode", "Apply colors", "Write to stdout"]
+      }
+    }
+  },
+
+  "stub_suggestions": {
+    "directory_structure": {
+      "codesentry/": {
+        "__init__.py": "version = '0.1.0'",
+        "__main__.py": "from .cli import main; main()",
+        "cli.py": "Click/Typer CLI entry point",
+        "analyzer.py": "BaseAnalyzer + AnalysisEngine",
+        "patterns/": {
+          "__init__.py": "Pattern registry",
+          "base.py": "BasePattern class",
+          "ai_exception_swallow.py": "CS001",
+          "ai_placeholder_code.py": "CS002",
+          "async_blocking_call.py": "CS003",
+          "security_hardcoded_secret.py": "CS004",
+          "idiom_mutable_default.py": "CS005"
+        },
+        "reporter.py": "Output formatting",
+        "models.py": "Issue, Location, Severity dataclasses"
+      },
+      "tests/": {
+        "fixtures/": "Sample Python files with known issues",
+        "test_patterns/": "One test file per pattern",
+        "test_cli.py": "CLI integration tests"
+      },
+      "pyproject.toml": "Project config, dependencies, entry point",
+      "README.md": "Usage docs"
+    },
+    "key_interfaces": {
+      "Issue": {
+        "type": "dataclass",
+        "fields": {
+          "pattern_id": "str",
+          "pattern_name": "str",
+          "category": "str",
+          "severity": "Severity",
+          "location": "Location",
+          "snippet": "str",
+          "teaching": "TeachingInfo"
+        }
+      },
+      "BasePattern": {
+        "type": "abstract class",
+        "methods": {
+          "analyze(ast_tree, source_lines) -> List[Issue]": "Run detection",
+          "get_teaching() -> TeachingInfo": "Return educational content"
+        },
+        "properties": {
+          "id": "str",
+          "name": "str",
+          "category": "str",
+          "severity": "Severity"
+        }
+      },
+      "AnalysisEngine": {
+        "type": "class",
+        "methods": {
+          "__init__(patterns: List[BasePattern])": "Register patterns",
+          "analyze_file(path: Path) -> AnalysisResult": "Run all patterns on file"
+        }
+      }
+    },
+    "cli_skeleton": "import click\nfrom pathlib import Path\nfrom .analyzer import AnalysisEngine\nfrom .patterns import ALL_PATTERNS\nfrom .reporter import Reporter\n\n@click.group()\n@click.version_option()\ndef main():\n    '''CodeSentry - AI-Powered Code Analysis & Education'''\n    pass\n\n@main.command()\n@click.argument('file', type=click.Path(exists=True, path_type=Path))\n@click.option('--teach', '-t', is_flag=True, help='Verbose explanations')\n@click.option('--quick', '-q', is_flag=True, help='Minimal output')\n@click.option('--format', '-f', type=click.Choice(['text', 'json']), default='text')\n@click.option('--no-color', is_flag=True, help='Disable colors')\ndef scan(file, teach, quick, format, no_color):\n    '''Scan a Python file for anti-patterns'''\n    engine = AnalysisEngine(ALL_PATTERNS)\n    result = engine.analyze_file(file)\n    \n    mode = 'teach' if teach else 'quick' if quick else 'default'\n    reporter = Reporter(format=format, mode=mode, color=not no_color)\n    reporter.report(result)\n    \n    # Exit code: 0=clean, 1=warnings, 2=errors, 3=critical\n    raise SystemExit(result.max_severity_code)\n\n@main.command()\ndef patterns():\n    '''List all detectable patterns'''\n    for p in ALL_PATTERNS:\n        click.echo(f'{p.id}: {p.name} [{p.category}] - {p.severity}')"
+  },
+
+  "test_fixtures": {
+    "description": "Sample files for testing each pattern",
+    "files": {
+      "test_cs001_exception_swallow.py": "# Test file for CS001\ndef bad_fetch():\n    try:\n        data = fetch_remote()\n    except Exception:\n        pass  # CS001 should trigger\n\ndef also_bad():\n    try:\n        process()\n    except:  # Bare except - CS001\n        pass\n\ndef acceptable():\n    try:\n        optional_cleanup()\n    except FileNotFoundError:  # Specific - OK\n        pass",
+      "test_cs002_placeholder.py": "# Test file for CS002\ndef not_implemented_yet():\n    # TODO: implement this function\n    pass  # CS002 should trigger\n\ndef stub_function():\n    '''This does something important'''\n    ...  # CS002 - ellipsis only body\n\ndef raises_not_implemented():\n    # FIXME: finish this\n    raise NotImplementedError  # CS002\n\ndef actually_implemented():\n    # TODO: optimize this later\n    return compute_value()  # OK - has real implementation",
+      "test_cs003_async_blocking.py": "# Test file for CS003\nimport asyncio\nimport time\nimport requests\n\nasync def bad_sleep():\n    time.sleep(1)  # CS003\n    return 'done'\n\nasync def bad_request():\n    response = requests.get('https://api.example.com')  # CS003\n    return response.json()\n\nasync def good_async():\n    await asyncio.sleep(1)  # OK\n    return 'done'",
+      "test_cs004_secrets.py": "# Test file for CS004\nAPI_KEY = 'sk-abc123def456ghi789jkl012mno345pqr678stu901vwx234'  # CS004\nDATABASE_URL = 'postgresql://admin:password123@localhost/db'  # CS004\nSLACK_TOKEN = 'xoxb-123456789-abcdefghij'  # CS004\n\nimport os\nSAFE_KEY = os.environ.get('API_KEY')  # OK",
+      "test_cs005_mutable_default.py": "# Test file for CS005\ndef bad_list_default(items=[]):  # CS005\n    items.append('x')\n    return items\n\ndef bad_dict_default(cache={}):  # CS005\n    return cache\n\ndef good_pattern(items=None):\n    if items is None:\n        items = []\n    return items"
+    }
+  },
+
+  "dependencies": {
+    "runtime": {
+      "python": ">=3.9",
+      "click": ">=8.0 (or typer>=0.9)",
+      "rich": ">=13.0 (optional, for pretty output)"
+    },
+    "dev": {
+      "pytest": ">=7.0",
+      "pytest-cov": ">=4.0",
+      "ruff": ">=0.1 (linting)",
+      "mypy": ">=1.0 (type checking)"
+    }
+  },
+
+  "exit_codes": {
+    "0": "No issues found",
+    "1": "Warnings found (mutable default, exception swallowing)",
+    "2": "Errors found (placeholder code, blocking async)",
+    "3": "Critical issues found (hardcoded secrets)"
+  },
+
+  "validation_plan": {
+    "phase0_testing": {
+      "approach": "Informal testing with LinkedIn network",
+      "target": "10 developers",
+      "questions": [
+        "Did the tool find real issues in your code?",
+        "Were the explanations helpful?",
+        "Did you learn something you didn't know?",
+        "Would you use this over existing linters? Why/why not?",
+        "What patterns would you add?"
+      ],
+      "metrics_to_track": [
+        "False positive rate per pattern",
+        "Which output mode (default/teach/quick) preferred",
+        "Time to understand an issue",
+        "Feature requests"
+      ]
+    }
+  },
+
+  "future_phases_preview": {
+    "phase1": "20+ patterns, config file, multi-file analysis",
+    "phase2": "LLM-powered detection for complex patterns",
+    "phase3": "IDE extensions, CI integration, auto-fix",
+    "phase4": "Learning paths, gamification, team analytics"
+  },
+
+  "metadata": {
+    "spec_version": "1.0",
+    "created": "2025-01-28",
+    "author": "Morgan (Clawdbot Agent)",
+    "format": "morgan-json-spec-v1"
+  }
+}
