@@ -87,7 +87,7 @@ codesentry version
 
 Traditional linters tell you *what's wrong*. CodeSentry teaches you *why it matters*.
 
-This is especially important in the age of AI-generated code, where developers may accept suggestions without fully understanding the implications. CodeSentry helps bridge that knowledge gap.
+Built in response to [Anthropic's research](https://arxiv.org/abs/2601.20245) showing AI-assisted developers score 17% lower on code comprehension, with debugging skills showing the steepest decline (Shen & Tamkin, 2026). CodeSentry bridges that knowledge gap—catching what AI generates, teaching what developers forgot.
 
 ## Development
 
