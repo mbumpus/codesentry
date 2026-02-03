@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 authors = [
-    {name = "CodeSentry Team"}
+    {name = "Mike Bumpus", email = "mike@digitalego.ai"}
 ]
 keywords = [
     "linter",
@@ -53,10 +53,10 @@ rich = [
 codesentry = "codesentry.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/codesentry/codesentry"
-Documentation = "https://github.com/codesentry/codesentry#readme"
-Repository = "https://github.com/codesentry/codesentry"
-Issues = "https://github.com/codesentry/codesentry/issues"
+Homepage = "https://github.com/mbumpus/codesentry"
+Documentation = "https://github.com/mbumpus/codesentry#readme"
+Repository = "https://github.com/mbumpus/codesentry"
+Issues = "https://github.com/mbumpus/codesentry/issues"
 
 [tool.setuptools.packages.find]
 include = ["codesentry*"]
