@@ -1,11 +1,10 @@
 """CS003: Blocking Call in Async Function Pattern"""
 
 import ast
-from typing import List, Optional, Tuple
+from typing import Optional
 
 from ..models import Issue, Severity, TeachingInfo
 from .base import BasePattern
-
 
 # Blocking calls and their async alternatives
 BLOCKING_CALLS = {
@@ -31,27 +30,27 @@ BLOCKING_BUILTINS = {
 
 class AsyncBlockingPattern(BasePattern):
     """Detect blocking calls inside async functions"""
-    
+
     @property
     def id(self) -> str:
         return "CS003"
-    
+
     @property
     def name(self) -> str:
         return "blocking-call-in-async"
-    
+
     @property
     def category(self) -> str:
         return "async-concurrency"
-    
+
     @property
     def severity(self) -> Severity:
         return Severity.ERROR
-    
+
     @property
     def description(self) -> str:
         return "Using blocking calls inside async functions"
-    
+
     def get_teaching(self) -> TeachingInfo:
         return TeachingInfo(
             what="You're using a blocking call inside an async function.",
@@ -74,25 +73,25 @@ class AsyncBlockingPattern(BasePattern):
             await asyncio.sleep(1)  # Other tasks can run
             return await response.json()"""
         )
-    
-    def analyze(self, tree: ast.AST, source_lines: List[str], source: str) -> List[Issue]:
+
+    def analyze(self, tree: ast.AST, source_lines: list[str], source: str) -> list[Issue]:
         issues = []
-        
+
         # Build import alias map
         import_map = self._build_import_map(tree)
-        
+
         # Find all async functions and check for blocking calls
         for node in ast.walk(tree):
             if isinstance(node, ast.AsyncFunctionDef):
                 blocking_issues = self._check_async_function(node, source_lines, import_map)
                 issues.extend(blocking_issues)
-        
+
         return issues
-    
+
     def _build_import_map(self, tree: ast.AST) -> dict:
         """Build mapping of aliases to actual module.function"""
         import_map = {}
-        
+
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
@@ -103,14 +102,14 @@ class AsyncBlockingPattern(BasePattern):
                 for alias in node.names:
                     name = alias.asname or alias.name
                     import_map[name] = (module, alias.name)
-        
+
         return import_map
-    
-    def _check_async_function(self, func: ast.AsyncFunctionDef, 
-                              source_lines: List[str], import_map: dict) -> List[Issue]:
+
+    def _check_async_function(self, func: ast.AsyncFunctionDef,
+                              source_lines: list[str], import_map: dict) -> list[Issue]:
         """Check an async function for blocking calls"""
         issues = []
-        
+
         for node in ast.walk(func):
             if isinstance(node, ast.Call):
                 blocking_info = self._is_blocking_call(node, import_map)
@@ -133,18 +132,18 @@ class AsyncBlockingPattern(BasePattern):
                         example_good=self.get_teaching().example_good
                     )
                     issues.append(issue)
-        
+
         return issues
-    
-    def _is_blocking_call(self, call: ast.Call, import_map: dict) -> Optional[Tuple[str, str]]:
+
+    def _is_blocking_call(self, call: ast.Call, import_map: dict) -> Optional[tuple[str, str]]:
         """Check if a call is a known blocking call. Returns (call_name, alternative) or None."""
-        
+
         # Check for module.function() pattern (e.g., time.sleep())
         if isinstance(call.func, ast.Attribute):
             if isinstance(call.func.value, ast.Name):
                 module_alias = call.func.value.id
                 func_name = call.func.attr
-                
+
                 # Resolve alias to actual module
                 actual_module = import_map.get(module_alias, module_alias)
                 if isinstance(actual_module, tuple):
@@ -155,15 +154,15 @@ class AsyncBlockingPattern(BasePattern):
                     key = (actual_module, func_name)
                     if key in BLOCKING_CALLS:
                         return (f"{module_alias}.{func_name}", BLOCKING_CALLS[key])
-        
+
         # Check for direct function call (e.g., open(), sleep())
         elif isinstance(call.func, ast.Name):
             func_name = call.func.id
-            
+
             # Check builtins
             if func_name in BLOCKING_BUILTINS:
                 return (func_name, BLOCKING_BUILTINS[func_name])
-            
+
             # Check if imported from a blocking module
             if func_name in import_map:
                 imported_from = import_map[func_name]
@@ -172,5 +171,5 @@ class AsyncBlockingPattern(BasePattern):
                     key = (module, actual_func)
                     if key in BLOCKING_CALLS:
                         return (func_name, BLOCKING_CALLS[key])
-        
+
         return None

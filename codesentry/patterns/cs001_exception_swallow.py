@@ -1,7 +1,6 @@
 """CS001: Generic Exception Swallow Pattern"""
 
 import ast
-from typing import List
 
 from ..models import Issue, Severity, TeachingInfo
 from .base import BasePattern
@@ -9,27 +8,27 @@ from .base import BasePattern
 
 class ExceptionSwallowPattern(BasePattern):
     """Detect broad exceptions being silently swallowed"""
-    
+
     @property
     def id(self) -> str:
         return "CS001"
-    
+
     @property
     def name(self) -> str:
         return "generic-exception-swallow"
-    
+
     @property
     def category(self) -> str:
         return "ai-generated-signature"
-    
+
     @property
     def severity(self) -> Severity:
         return Severity.WARNING
-    
+
     @property
     def description(self) -> str:
         return "Catching broad exceptions and silently ignoring them"
-    
+
     def get_teaching(self) -> TeachingInfo:
         return TeachingInfo(
             what="You're catching all exceptions and silently swallowing them.",
@@ -52,10 +51,10 @@ except NetworkError as e:
     logger.warning(f'Network issue: {e}')
     raise  # Let caller decide retry strategy"""
         )
-    
-    def analyze(self, tree: ast.AST, source_lines: List[str], source: str) -> List[Issue]:
+
+    def analyze(self, tree: ast.AST, source_lines: list[str], source: str) -> list[Issue]:
         issues = []
-        
+
         for node in ast.walk(tree):
             if isinstance(node, ast.ExceptHandler):
                 if self._is_swallowing_exception(node):
@@ -65,41 +64,41 @@ except NetworkError as e:
                         col=node.col_offset,
                         snippet=snippet
                     ))
-        
+
         return issues
-    
+
     def _is_swallowing_exception(self, handler: ast.ExceptHandler) -> bool:
         """Check if this exception handler is swallowing exceptions"""
         # Check if it's a broad exception type
         if not self._is_broad_exception(handler):
             return False
-        
+
         # Check if body just swallows (pass, ellipsis, or only logging)
         return self._is_swallowing_body(handler.body)
-    
+
     def _is_broad_exception(self, handler: ast.ExceptHandler) -> bool:
         """Check if exception type is overly broad"""
         # Bare except
         if handler.type is None:
             return True
-        
+
         # except Exception or except BaseException
         if isinstance(handler.type, ast.Name):
             return handler.type.id in ("Exception", "BaseException")
-        
+
         # Handle tuple of exceptions: except (Exception, SomeOther)
         if isinstance(handler.type, ast.Tuple):
             for elt in handler.type.elts:
                 if isinstance(elt, ast.Name) and elt.id in ("Exception", "BaseException"):
                     return True
-        
+
         return False
-    
-    def _is_swallowing_body(self, body: List[ast.stmt]) -> bool:
+
+    def _is_swallowing_body(self, body: list[ast.stmt]) -> bool:
         """Check if handler body effectively does nothing"""
         if not body:
             return True
-        
+
         # Filter out docstrings
         actual_body = []
         for i, stmt in enumerate(body):
@@ -107,10 +106,10 @@ except NetworkError as e:
                 if isinstance(stmt.value.value, str):
                     continue  # Skip docstring
             actual_body.append(stmt)
-        
+
         if not actual_body:
             return True
-        
+
         # Single pass or ellipsis
         if len(actual_body) == 1:
             stmt = actual_body[0]
@@ -119,11 +118,11 @@ except NetworkError as e:
             if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
                 if stmt.value.value is ...:
                     return True
-        
+
         # Only logging without re-raise
         all_logging = True
         has_raise = False
-        
+
         for stmt in actual_body:
             if isinstance(stmt, ast.Raise):
                 has_raise = True
@@ -133,13 +132,13 @@ except NetworkError as e:
                     all_logging = False
             else:
                 all_logging = False
-        
+
         # Logging without raise is considered swallowing
         if all_logging and not has_raise and len(actual_body) > 0:
             return True
-        
+
         return False
-    
+
     def _is_logging_call(self, call: ast.Call) -> bool:
         """Check if this is a logging/print call"""
         if isinstance(call.func, ast.Attribute):

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import List, Optional
+from typing import Optional
 
 
 class Severity(IntEnum):
@@ -48,13 +48,13 @@ class Issue:
 class AnalysisResult:
     """Result of analyzing a file"""
     file_path: str
-    issues: List[Issue] = field(default_factory=list)
+    issues: list[Issue] = field(default_factory=list)
     parse_error: Optional[str] = None
-    
+
     @property
     def total_issues(self) -> int:
         return len(self.issues)
-    
+
     @property
     def by_severity(self) -> dict:
         counts = {"critical": 0, "error": 0, "warning": 0}
@@ -66,7 +66,7 @@ class AnalysisResult:
             else:
                 counts["warning"] += 1
         return counts
-    
+
     @property
     def max_severity_code(self) -> int:
         """Return exit code based on highest severity found"""

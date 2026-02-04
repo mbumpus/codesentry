@@ -2,11 +2,10 @@
 
 import ast
 import re
-from typing import List, Optional
+from typing import Optional
 
 from ..models import Issue, Severity, TeachingInfo
 from .base import BasePattern
-
 
 # Variable name patterns that suggest secrets
 SECRET_VAR_PATTERNS = [
@@ -35,27 +34,27 @@ URL_CREDENTIAL_PATTERNS = [
 
 class HardcodedSecretPattern(BasePattern):
     """Detect hardcoded secrets in source code"""
-    
+
     @property
     def id(self) -> str:
         return "CS004"
-    
+
     @property
     def name(self) -> str:
         return "hardcoded-secret"
-    
+
     @property
     def category(self) -> str:
         return "security"
-    
+
     @property
     def severity(self) -> Severity:
         return Severity.CRITICAL
-    
+
     @property
     def description(self) -> str:
         return "API keys, passwords, tokens, or secrets hardcoded in source files"
-    
+
     def get_teaching(self) -> TeachingInfo:
         return TeachingInfo(
             what="You have a secret (API key, password, token) hardcoded in your source file.",
@@ -76,10 +75,10 @@ load_dotenv()
 OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
 DATABASE_URL = os.environ['DATABASE_URL']"""
         )
-    
-    def analyze(self, tree: ast.AST, source_lines: List[str], source: str) -> List[Issue]:
+
+    def analyze(self, tree: ast.AST, source_lines: list[str], source: str) -> list[Issue]:
         issues = []
-        
+
         for node in ast.walk(tree):
             # Check assignments: VAR = 'secret'
             if isinstance(node, ast.Assign):
@@ -88,45 +87,45 @@ DATABASE_URL = os.environ['DATABASE_URL']"""
                         issue = self._check_assignment(target.id, node.value, source_lines)
                         if issue:
                             issues.append(issue)
-            
+
             # Check annotated assignments: VAR: str = 'secret'
             elif isinstance(node, ast.AnnAssign):
                 if isinstance(node.target, ast.Name) and node.value:
                     issue = self._check_assignment(node.target.id, node.value, source_lines)
                     if issue:
                         issues.append(issue)
-        
+
         return issues
-    
-    def _check_assignment(self, var_name: str, value_node: ast.AST, 
-                         source_lines: List[str]) -> Optional[Issue]:
+
+    def _check_assignment(self, var_name: str, value_node: ast.AST,
+                         source_lines: list[str]) -> Optional[Issue]:
         """Check if an assignment is a hardcoded secret"""
-        
+
         # Get the string value if it's a constant
         if not isinstance(value_node, ast.Constant):
             return None
-        
+
         value = value_node.value
         if not isinstance(value, str):
             return None
-        
+
         # Skip empty strings and very short strings
         if len(value) < 8:
             return None
-        
+
         # Check if variable name suggests a secret
         is_secret_name = any(pattern.match(var_name) for pattern in SECRET_VAR_PATTERNS)
-        
+
         # Check if value matches known secret patterns
         secret_type = None
         for pattern, name in SECRET_VALUE_PATTERNS:
             if pattern.search(value):
                 secret_type = name
                 break
-        
+
         # Check for URLs with embedded credentials
         has_url_creds = any(pattern.search(value) for pattern in URL_CREDENTIAL_PATTERNS)
-        
+
         # Determine if this is a secret
         if secret_type or (is_secret_name and self._looks_like_secret(value)) or has_url_creds:
             snippet = self._get_snippet(source_lines, value_node.lineno)
@@ -135,7 +134,7 @@ DATABASE_URL = os.environ['DATABASE_URL']"""
                 col=value_node.col_offset,
                 snippet=self._redact_snippet(snippet)
             )
-            
+
             # Customize teaching with specific secret type
             if secret_type:
                 issue.teaching = TeachingInfo(
@@ -146,46 +145,46 @@ DATABASE_URL = os.environ['DATABASE_URL']"""
                     example_bad=self.get_teaching().example_bad,
                     example_good=self.get_teaching().example_good
                 )
-            
+
             return issue
-        
+
         return None
-    
+
     def _looks_like_secret(self, value: str) -> bool:
         """Heuristic check if a string looks like a secret"""
         # Skip placeholder values
-        placeholders = ('xxx', 'your-', 'example', 'placeholder', 'changeme', 
+        placeholders = ('xxx', 'your-', 'example', 'placeholder', 'changeme',
                        'insert', 'replace', '<', '>', 'test', 'fake', 'dummy')
         value_lower = value.lower()
         if any(p in value_lower for p in placeholders):
             return False
-        
+
         # Skip if it's clearly a path or URL without credentials
         if value.startswith(('/','./','../')):
             return False
-        
+
         # Skip localhost URLs without credentials
         if 'localhost' in value_lower and '://' in value and '@' not in value:
             return False
-        
+
         # Check for high entropy (mixed case, numbers, special chars)
         has_upper = any(c.isupper() for c in value)
         has_lower = any(c.islower() for c in value)
         has_digit = any(c.isdigit() for c in value)
         has_special = any(c in '-_' for c in value)
-        
+
         # A secret typically has mixed character types
         entropy_markers = sum([has_upper, has_lower, has_digit, has_special])
-        
+
         return len(value) >= 16 and entropy_markers >= 3
-    
+
     def _redact_snippet(self, snippet: str) -> str:
         """Redact potential secrets in the snippet for safe display"""
         # Redact known patterns
         for pattern, _ in SECRET_VALUE_PATTERNS:
             snippet = pattern.sub('[REDACTED]', snippet)
-        
+
         # Redact URL credentials
         snippet = re.sub(r'://([^:]+):([^@]+)@', r'://\1:[REDACTED]@', snippet)
-        
+
         return snippet
