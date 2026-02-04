@@ -14,3 +14,13 @@ venv/
 *.swo
 .idea/
 .vscode/
+
+# Crewly Codes internal artifacts
+history.md
+bugs.yaml
+specs/
+testing/
+dist/
+.pytest_cache/
+__pycache__/
+*.egg-info/
